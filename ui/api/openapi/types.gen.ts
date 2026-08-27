@@ -608,6 +608,14 @@ export type ReachablePlace = {
      *
      */
     k?: number;
+    /**
+     * Only present in n-to-all responses.
+     * Zero-based index into the origins array from the request, identifying
+     * which origin reaches this stop fastest. Use this to colour-code stops
+     * on a map — each unique index corresponds to a different origin.
+     *
+     */
+    originIndex?: number;
 };
 
 /**
@@ -620,6 +628,23 @@ export type Reachable = {
     one?: Place;
     /**
      * List of locations reachable by One-to-All
+     */
+    all?: Array<ReachablePlace>;
+};
+
+/**
+ * Object containing all reachable places by N-to-All search
+ */
+export type NToAll = {
+    /**
+     * List of origin places in the same order as the origins parameter in the request
+     */
+    origins?: Array<Place>;
+    /**
+     * List of all stops reachable from at least one origin. Each entry is assigned
+     * to the origin that reaches it fastest. The originIndex field in each
+     * ReachablePlace identifies which origin owns that stop.
+     *
      */
     all?: Array<ReachablePlace>;
 };
@@ -3411,6 +3436,65 @@ export type OneToAllData = {
 export type OneToAllResponse = (Reachable);
 
 export type OneToAllError = (Error);
+
+export type NToAllData = {
+    query: {
+        additionalTransferTime?: number;
+        cyclingSpeed?: CyclingSpeed;
+        elevationCosts?: ElevationCosts;
+        maxMatchingDistance?: number;
+        maxPreTransitTime?: number;
+        /**
+         * The maximum number of allowed transfers (i.e. interchanges between transit legs,
+         * pre- and postTransit do not count as transfers).
+         * `maxTransfers=0` searches for direct transit connections without any transfers.
+         *
+         */
+        maxTransfers?: number;
+        /**
+         * The maximum travel time in minutes. The limit may be increased by the server administrator using `onetoall_max_travel_minutes` option in `config.yml`. See documentation for details.
+         */
+        maxTravelTime: number;
+        minTransferTime?: number;
+        noCompulsoryReservation?: boolean;
+        /**
+         * List of origin places. Each entry uses the same format as the `one` parameter
+         * of `/api/v6/one-to-all` (latitude,longitude[,level] or stop id).
+         * At least 1 entry required. At most 10 entries allowed.
+         *
+         */
+        origins: Array<(string)>;
+        pedestrianProfile?: PedestrianProfile;
+        pedestrianSpeed?: PedestrianSpeed;
+        preTransitModes?: Array<Mode>;
+        requireBikeTransport?: boolean;
+        requireCarTransport?: boolean;
+        /**
+         * Optional. Defaults to the current time.
+         * Departure time for all origins simultaneously.
+         *
+         */
+        time?: string;
+        transferTimeFactor?: number;
+        transitModes?: Array<Mode>;
+        useRoutedTransfers?: boolean;
+        vehicleAxleCount?: VehicleAxleCount;
+        vehicleAxleLoad?: VehicleAxleLoad;
+        vehicleHazmat?: VehicleHazmat;
+        vehicleHazmatWater?: VehicleHazmatWater;
+        vehicleHeight?: VehicleHeight;
+        vehicleLength?: VehicleLength;
+        vehicleLezAccess?: VehicleLezAccess;
+        vehicleTopSpeed?: VehicleTopSpeed;
+        vehicleTrailer?: VehicleTrailer;
+        vehicleWeight?: VehicleWeight;
+        vehicleWidth?: VehicleWidth;
+    };
+};
+
+export type NToAllResponse = (NToAll);
+
+export type NToAllError = (Error);
 
 export type ReverseGeocodeData = {
     query: {

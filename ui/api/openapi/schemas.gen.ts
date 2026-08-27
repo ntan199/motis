@@ -713,6 +713,14 @@ k=0: No connection, e.g. for the one location
 k=1: Direct connection
 k=2: Connection with 1 transfer
 `
+        },
+        originIndex: {
+            type: 'integer',
+            description: `Only present in n-to-all responses.
+Zero-based index into the origins array from the request, identifying
+which origin reaches this stop fastest. Use this to colour-code stops
+on a map — each unique index corresponds to a different origin.
+`
         }
     }
 } as const;
@@ -727,6 +735,30 @@ export const ReachableSchema = {
         },
         all: {
             description: 'List of locations reachable by One-to-All',
+            type: 'array',
+            items: {
+                '$ref': '#/components/schemas/ReachablePlace'
+            }
+        }
+    }
+} as const;
+
+export const NToAllSchema = {
+    description: 'Object containing all reachable places by N-to-All search',
+    type: 'object',
+    properties: {
+        origins: {
+            description: 'List of origin places in the same order as the origins parameter in the request',
+            type: 'array',
+            items: {
+                '$ref': '#/components/schemas/Place'
+            }
+        },
+        all: {
+            description: `List of all stops reachable from at least one origin. Each entry is assigned
+to the origin that reaches it fastest. The originIndex field in each
+ReachablePlace identifies which origin owns that stop.
+`,
             type: 'array',
             items: {
                 '$ref': '#/components/schemas/ReachablePlace'

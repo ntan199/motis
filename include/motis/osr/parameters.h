@@ -51,6 +51,8 @@ osr_parameters get_osr_parameters(api::refreshItinerary_params const&);
 
 osr_parameters get_osr_parameters(api::oneToAll_params const&);
 
+osr_parameters get_osr_parameters(api::nToAll_params const&);
+
 osr_parameters get_osr_parameters(api::oneToMany_params const&);
 
 osr_parameters get_osr_parameters(api::OneToManyParams const&);

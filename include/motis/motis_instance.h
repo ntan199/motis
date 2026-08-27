@@ -42,6 +42,7 @@
 #include "motis/gbfs/update.h"
 #include "motis/metrics_registry.h"
 #include "motis/rt_update.h"
+#include "motis/endpoints/raptor_n_to_all.h"
 
 namespace motis {
 
@@ -132,6 +133,7 @@ struct motis_instance {
     GET<ep::one_to_all>("/api/experimental/one-to-all", d);
     GET<ep::one_to_all>("/api/v1/one-to-all", d);
     GET<ep::one_to_all>("/api/v6/one-to-all", d);
+    GET<ep::raptor_n_to_all>("/api/v1/n-to-all", d);
     GET<ep::one_to_many>("/api/v1/one-to-many", d);
     GET<ep::refresh_itinerary>("/api/v6/refresh-itinerary", d);
     GET<ep::one_to_many_intermodal>("/api/experimental/one-to-many-intermodal",

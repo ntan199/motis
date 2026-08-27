@@ -2209,6 +2209,243 @@ paths:
               schema:
                 $ref: '#/components/schemas/Reachable'
 
+                
+  /api/v1/n-to-all:
+    get:
+      tags:
+        - routing
+      summary: |
+        Computes all reachable locations from multiple origin stops within a set duration.
+        Each result entry contains the fastest travel duration, the number of connections
+        used, and the index of the origin that reaches the stop fastest.
+        Useful for visualising competitive catchment areas (e.g. which bakery each stop
+        can reach faster).
+      operationId: nToAll
+      parameters:
+        - name: origins
+          in: query
+          required: true
+          description: |
+            List of origin places. Each entry uses the same format as the `one` parameter
+            of `/api/v6/one-to-all` (latitude,longitude[,level] or stop id).
+            At least 1 entry required. At most 10 entries allowed.
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 10
+            items:
+              type: string
+          explode: true
+        - name: time
+          in: query
+          required: false
+          description: |
+            Optional. Defaults to the current time.
+            Departure time for all origins simultaneously.
+          schema:
+            type: string
+            format: date-time
+        - name: maxTravelTime
+          in: query
+          required: true
+          description: The maximum travel time in minutes. The limit may be increased by the server administrator using `onetoall_max_travel_minutes` option in `config.yml`. See documentation for details.
+          schema:
+            type: integer
+        - name: maxTransfers
+          in: query
+          required: false
+          description: |
+            The maximum number of allowed transfers (i.e. interchanges between transit legs,
+            pre- and postTransit do not count as transfers).
+            `maxTransfers=0` searches for direct transit connections without any transfers.
+          schema:
+            type: integer
+        - name: minTransferTime
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: additionalTransferTime
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: transferTimeFactor
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 1.0
+        - name: maxMatchingDistance
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 250
+        - name: useRoutedTransfers
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: pedestrianProfile
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PedestrianProfile'
+            default: FOOT
+        - name: pedestrianSpeed
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PedestrianSpeed'
+        - name: cyclingSpeed
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/CyclingSpeed'
+        - name: vehicleHeight
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleHeight"
+        - name: vehicleWidth
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleWidth"
+        - name: vehicleLength
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleLength"
+        - name: vehicleWeight
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleWeight"
+        - name: vehicleHazmat
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleHazmat"
+        - name: vehicleHazmatWater
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleHazmatWater"
+        - name: vehicleAxleCount
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleAxleCount"
+        - name: vehicleAxleLoad
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleAxleLoad"
+        - name: vehicleTrailer
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleTrailer"
+        - name: vehicleTopSpeed
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleTopSpeed"
+        - name: vehicleLezAccess
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VehicleLezAccess"
+        - name: elevationCosts
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ElevationCosts'
+            default: NONE
+        - name: transitModes
+          in: query
+          required: false
+          schema:
+            default:
+              - TRANSIT
+            type: array
+            items:
+              $ref: '#/components/schemas/Mode'
+          explode: false
+        - name: preTransitModes
+          in: query
+          required: false
+          schema:
+            default:
+              - WALK
+            type: array
+            items:
+              $ref: '#/components/schemas/Mode'
+          explode: false
+        - name: requireBikeTransport
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: requireCarTransport
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: noCompulsoryReservation
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: maxPreTransitTime
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 900
+            minimum: 0
+      responses:
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '200':
+          description: |
+            The resolved origin places and a list of all reachable stops assigned to
+            their nearest origin. If no paths are found, the all list is empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NToAll'
+
   /api/v1/reverse-geocode:
     get:
       tags:
@@ -4501,6 +4738,13 @@ components:
             k=0: No connection, e.g. for the one location
             k=1: Direct connection
             k=2: Connection with 1 transfer
+        originIndex:
+          type: integer
+          description: |
+            Only present in n-to-all responses.
+            Zero-based index into the origins array from the request, identifying
+            which origin reaches this stop fastest. Use this to colour-code stops
+            on a map — each unique index corresponds to a different origin.
 
     Reachable:
       description: Object containing all reachable places by One-to-All search
@@ -4511,6 +4755,24 @@ components:
           description: One location used in One-to-All search
         all:
           description: List of locations reachable by One-to-All
+          type: array
+          items:
+            $ref: "#/components/schemas/ReachablePlace"
+
+    NToAll:
+      description: Object containing all reachable places by N-to-All search
+      type: object
+      properties:
+        origins:
+          description: List of origin places in the same order as the origins parameter in the request
+          type: array
+          items:
+            $ref: "#/components/schemas/Place"
+        all:
+          description: |
+            List of all stops reachable from at least one origin. Each entry is assigned
+            to the origin that reaches it fastest. The originIndex field in each
+            ReachablePlace identifies which origin owns that stop.
           type: array
           items:
             $ref: "#/components/schemas/ReachablePlace"
