@@ -81,6 +81,8 @@
 	import StopsView from '$lib/map/stops/StopsView.svelte';
 	import { formatDate } from '$lib/toDateTime';
 	import { getPageTitle } from '$lib/pageTitle';
+	import NToAll from '$lib/map/NToAll.svelte';
+    import { nToAll } from '@motis-project/motis-client';
 
 	const urlParams = browser ? new URLSearchParams(window.location.search) : undefined;
 
@@ -114,6 +116,8 @@
 	let showRoutes = $state(false);
 	let lastOneToAllQuery: Parameters<typeof oneToAll>[0] | undefined = undefined;
 	let lastPlanQuery: PlanData | undefined = undefined;
+	let lastNToAllQuery: Parameters<typeof nToAll>[0] | undefined;
+    let nToAllQueryTimeout: number;
 	let serverConfig: ServerConfig | undefined = $state();
 	let dataLoaded: boolean = $state(false);
 	$effect(() => {
@@ -413,6 +417,28 @@
 			? viaParam.map((str, i) => parseLocation(str, viaLabels[`viaLabel${i}`]))
 			: undefined
 	);
+	const originsParam = getUrlArray('origins');
+    let nToAllOrigins = $state<Location[]>(
+        originsParam.map((str, i) => {
+            const pos = urlParams?.get(`originPos${i}`)?.split(',');
+            const lat = pos ? parseFloat(pos[0]) : 0;
+            const lon = pos ? parseFloat(pos[1]) : 0;
+            return {
+                label: urlParams?.get(`originName${i}`) ?? str,
+                match: lat && lon ? [{
+                    type: 'STOP' as const,
+                    id: str,
+                    name: urlParams?.get(`originName${i}`) ?? str,
+                    lat,
+                    lon,
+                    level: 0,
+                    score: 0,
+                    tokens: [],
+                    areas: []
+                }] : []
+            } satisfies Location;
+        })
+    );
 	let viaMinimumStay = $state(
 		urlParams?.has('via') ? getUrlArray('viaMinimumStay').map((s) => parseIntOr(s, 0)) : undefined
 	);
@@ -775,6 +801,35 @@
 		)
 	);
 
+    let nToAllQuery = $derived(
+        nToAllOrigins.length >= 2 && nToAllOrigins.every((o) => o?.match?.length > 0)
+            ? ({
+                query: {
+                    // Use the raw stop ID from getUrlArray, not toPlaceString
+                    origins: getUrlArray('origins'),
+                    maxTravelTime: Math.ceil(maxTravelTime / 60),
+                    time: time.toISOString(),
+                    transitModes,
+                    maxTransfers,
+                    cyclingSpeed,
+                    pedestrianSpeed,
+                    transferTimeFactor,
+                    additionalTransferTime,
+                    useRoutedTransfers,
+                    pedestrianProfile,
+                    requireBikeTransport,
+                    requireCarTransport,
+                    noCompulsoryReservation,
+                    preTransitModes: prePostModesToModes(preTransitModes),
+                    maxPreTransitTime,
+                    elevationCosts,
+                    maxMatchingDistance: pedestrianProfile == 'WHEELCHAIR' ? 8 : 250
+                }
+              } satisfies Parameters<typeof nToAll>[0])
+            : undefined
+    );
+    // At top level of <script>, alongside other state declarations:
+    let nToAllComponent = $state<ReturnType<typeof NToAll>>();
 	const refreshSelectedItinerary = async () => {
 		const itineraryId = page.state.selectedItinerary?.id;
 		if (!itineraryId || refreshingItinerary) {
@@ -901,6 +956,53 @@
 			});
 		}
 	});
+    $effect(() => {
+        console.log('[NToAll] effect fired');
+        console.log('[NToAll] current URL:', window.location.search);
+        console.log('[NToAll] originsParam:', getUrlArray('origins'));
+        console.log('[NToAll] nToAllOrigins:', nToAllOrigins);
+        console.log('[NToAll] nToAllQuery:', nToAllQuery);
+        console.log('[NToAll] activeTab:', activeTab);
+        console.log('[NToAll] effect fired, activeTab:', activeTab, 'origins:', nToAllOrigins.length, 'query:', nToAllQuery);
+        if (nToAllQuery && activeTab == 'isochrones') {
+            if (lastNToAllQuery != nToAllQuery) {
+                lastNToAllQuery = nToAllQuery;
+                clearTimeout(nToAllQueryTimeout);
+                isochronesOptions.status = 'WORKING';
+                nToAllQueryTimeout = setTimeout(async () => {
+                    try {
+                        const { data, error, response } = await nToAll(nToAllQuery);
+                        if (error) {
+                            isochronesOptions.status = 'FAILED';
+                            isochronesOptions.errorCode = response.status;
+                            isochronesOptions.errorMessage = error.error;
+                            return;
+                        }
+                        console.log('[NToAll] API response:', data?.all?.length, 'places');
+                        nToAllComponent?.setResults(data?.all ?? []);  // ← only once
+                        isochronesOptions.status = (data?.all?.length ?? 0) === 0 ? 'EMPTY' : 'DONE';
+                    } catch (e) {
+                        isochronesOptions.status = 'FAILED';
+                        isochronesOptions.errorMessage = String(e);
+                        isochronesOptions.errorCode = 404;
+                    }
+                }, 60);
+            }
+            untrack(() => {
+                const q = nToAllQuery?.query;
+                if (!q) return;
+                pushStateWithQueryString(
+                    {
+                        origins: q.origins.join(','),  // already the raw stop IDs
+                        maxTravelTime: q.maxTravelTime,
+                        time: q.time
+                    },
+                    { activeTab }
+                );
+            });
+        }
+        // ← nothing here — the two rogue lines are deleted
+    });
 
 	if (browser) {
 		addEventListener('paste', (event: ClipboardEvent) => {
@@ -1463,6 +1565,20 @@
 				options={isochronesOptions}
 			/>
 
+            <NToAll
+                bind:this={nToAllComponent}
+                {map}
+                origins={getUrlArray('origins').map((id, i) => ({
+                    id,
+                    name: urlParams?.get(`originName${i}`) ?? id
+                }))}
+                streetModes={prePostModesToModes(preTransitModes) as PrePostDirectMode[]}
+                wheelchair={pedestrianProfile === 'WHEELCHAIR'}
+                maxAllTime={maxPreTransitTime}
+                {maxTravelTime}
+                active={activeTab === 'isochrones' && getUrlArray('origins').length >= 2}
+                options={isochronesOptions}
+            />
 			<Popup trigger="contextmenu" children={contextMenu} />
 
 			{#if from && activeTab == 'connections'}
