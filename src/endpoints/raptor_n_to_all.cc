@@ -36,7 +36,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
       config_.get_limits().onetoall_max_travel_minutes_;
   auto const query = api::nToAll_params{url.params()};
 
-  // mirrors one_to_all.cc: cap maxMatchingDistance at server limit
+  // Cap maxMatchingDistance at server limit (mirrors one_to_all.cc).
   auto const max_matching_distance =
       std::min(query.maxMatchingDistance_,
                config_.get_limits().max_max_matching_distance_);
@@ -63,6 +63,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
         *query.maxTransfers_);
   }
 
+  // --- Setup (mirrors one_to_all.cc exactly) ---
   auto const time = std::chrono::time_point_cast<std::chrono::minutes>(
       *query.time_.value_or(openapi::now()));
   auto const max_travel_time = n::duration_t{query.maxTravelTime_};
@@ -74,7 +75,6 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
   auto gbfs_rd = gbfs::gbfs_routing_data{w_, l_, gbfs_};
   auto const osr_params = get_osr_parameters(query);
 
-  // forward-only (no arriveBy for multi-origin)
   auto const one_modes    = deduplicate(query.preTransitModes_);
   auto const one_max_time = std::min(
       std::chrono::seconds{query.maxPreTransitTime_},
@@ -93,35 +93,41 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
           : 0U);
 
   // --- Resolve each origin ---
-  // For each entry in query.origins_, call get_offsets exactly as
-  // one_to_all does for its single `one`. We track one representative
-  // location_idx_t per origin (the closest resolved stop) — this is what
-  // nigiri::routing::raptor_n_to_all uses as the owner key for that origin.
-  auto prepare_stats   = std::map<std::string, std::uint64_t>{};
-  auto resolved_places = std::vector<api::Place>{};
-  auto origin_locs     = std::vector<n::location_idx_t>{};
-  auto all_starts      = std::vector<n::routing::offset>{};
-  auto all_td_starts   = n::routing::td_offsets_t{};
+  // For each resolved stop we register it in stop_to_origin_idx so that
+  // ANY stop that raptor_n_to_all could use as an owner maps back to the
+  // correct origin index. This fixes null originIndex when the algorithm
+  // picks a non-representative stop (e.g. via equivalent stop expansion).
+  auto prepare_stats      = std::map<std::string, std::uint64_t>{};
+  auto resolved_places    = std::vector<api::Place>{};
+  auto origin_locs        = std::vector<n::location_idx_t>{};
+  auto all_starts         = std::vector<n::routing::offset>{};
+  auto all_td_starts      = n::routing::td_offsets_t{};
+  auto stop_to_origin_idx =
+      std::unordered_map<n::location_idx_t, std::int64_t>{};
 
   for (auto const& origin_str : query.origins_) {
-    auto const place = get_place(&tt_, &tags_, origin_str);
+    auto const place      = get_place(&tt_, &tags_, origin_str);
+    auto const origin_idx = static_cast<std::int64_t>(origin_locs.size());
 
     auto starts = r.get_offsets(
         nullptr, place, osr::direction::kForward, one_modes,
         rental_options{}, osr_params, query.pedestrianProfile_,
         query.elevationCosts_, one_max_time,
-        max_matching_distance,  // use capped value
-        gbfs_rd, prepare_stats);
+        max_matching_distance, gbfs_rd, prepare_stats);
 
     auto td_starts = r.get_td_offsets(
         nullptr, nullptr, place, osr::direction::kForward, one_modes,
         osr_params, query.pedestrianProfile_, query.elevationCosts_,
-        max_matching_distance,  // use capped value
-        one_max_time, time, prepare_stats);
+        max_matching_distance, one_max_time, time, prepare_stats);
 
-    // Track the closest resolved transit stop as this origin's identity.
-    // raptor_n_to_all seeds only these representative stops so the
-    // owner key always matches one of these entries.
+    // Register ALL resolved stops for this origin.
+    // raptor_n_to_all may set cell.owner_ to any of these stops,
+    // not just starts.front(). Registering all of them prevents nullopt.
+    for (auto const& s : starts) {
+      stop_to_origin_idx.emplace(s.target(), origin_idx);
+    }
+
+    // Representative stop — closest resolved stop, used as seed identity.
     origin_locs.push_back(starts.empty()
                                ? n::location_idx_t::invalid()
                                : starts.front().target());
@@ -185,26 +191,18 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
     }
   }
 
-  // Pass real-time timetable if available, same as one_to_all.cc.
   auto const* rtt = rt_ ? rt_->rtt_.get() : nullptr;
-  constexpr auto const kVias = n::via_offset_t{0U};
+
   auto const result = n::routing::raptor_n_to_all(
       tt_, rtt, valid_origins, time, q.max_transfers_, max_travel_time);
 
-  // Build owner location -> origin index lookup.
-  auto owner_to_idx =
-      std::unordered_map<n::location_idx_t, std::int64_t>{};
-  for (auto i = std::uint32_t{0U}; i != origin_locs.size(); ++i) {
-    auto const l = origin_locs[i];
-    if (l != n::location_idx_t::invalid()) {
-      owner_to_idx.emplace(l, static_cast<std::int64_t>(i));
-    }
-  }
-
   // --- Assemble response ---
-  // Use bitvec + get_best<0> to filter reachable stops, mirroring
-  // how one_to_all.cc iterates only over reached entries.
-  auto const unreachable = n::kInvalidDelta<n::direction::kForward>;
+  auto const max_results  = config_.get_limits().onetoall_max_results_;
+  auto const unreachable  = n::kInvalidDelta<n::direction::kForward>;
+  auto const& round_times = result.state_.get_round_times<n::via_offset_t{0U}>();
+
+  // Use get_best<0> + bitvec to iterate only reached stops,
+  // mirroring one_to_all.cc's approach.
   auto reachable = n::bitvec{tt_.n_locations()};
   for (auto i = 0U; i != tt_.n_locations(); ++i) {
     if (result.state_.get_best<0>()[i][0] != unreachable) {
@@ -212,12 +210,11 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
     }
   }
 
-  auto const max_results = config_.get_limits().onetoall_max_results_;
+  auto const max_results_count = max_results;
   utl::verify<net::too_many_exception>(
-      reachable.count() <= max_results,
-      "too many results: {} > {}", reachable.count(), max_results);
+      reachable.count() <= max_results_count,
+      "too many results: {} > {}", reachable.count(), max_results_count);
 
-  auto const& round_times = result.state_.get_round_times<kVias>();
   auto all = std::vector<api::ReachablePlace>{};
   all.reserve(reachable.count());
 
@@ -225,8 +222,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
     auto const l     = n::location_idx_t{i};
     auto const& cell = result.cell(l);
 
-    // Find k — same semantics as one_to_all's ReachablePlace:
-    //   k=0: origin itself, k=1: direct, k=2: one transfer, etc.
+    // Find k — same semantics as one_to_all's ReachablePlace.
     auto k = std::int64_t{0};
     for (auto ki = 0U; ki <= q.max_transfers_ + 1U; ++ki) {
       if (round_times[ki][i][0] != unreachable) {
@@ -235,9 +231,11 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
       }
     }
 
-    auto const origin_it  = owner_to_idx.find(cell.owner_);
+    // Look up origin index using ALL resolved stops (not just representatives).
+    // This prevents null originIndex for stops owned by non-primary seeds.
+    auto const origin_it  = stop_to_origin_idx.find(cell.owner_);
     auto const origin_idx =
-        origin_it != owner_to_idx.end()
+        origin_it != stop_to_origin_idx.end()
             ? std::optional<std::int64_t>{origin_it->second}
             : std::nullopt;
 

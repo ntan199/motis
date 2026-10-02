@@ -65,6 +65,7 @@
 	import IsochronesInfo from '$lib/IsochronesInfo.svelte';
 	import type { IsochronesOptions, IsochronesPos } from '$lib/map/IsochronesShared';
 	import IsochronesMask from '$lib/IsochronesMask.svelte';
+	import NToAllMask from '$lib/NToAllMask.svelte';
 	import Rentals from '$lib/map/rentals/Rentals.svelte';
 	import Routes from '$lib/map/routes/Routes.svelte';
 	import {
@@ -85,19 +86,23 @@
     import { nToAll } from '@motis-project/motis-client';
 
 	const urlParams = browser ? new URLSearchParams(window.location.search) : undefined;
-
+    const INITIAL_ORIGINS      = getUrlArray('origins');
+    const INITIAL_ORIGIN_NAMES = INITIAL_ORIGINS.map((_, i) => urlParams?.get(`originName${i}`) ?? '');
+    const INITIAL_ORIGIN_POS   = INITIAL_ORIGINS.map((_, i) => urlParams?.get(`originPos${i}`) ?? '');
 	const hasDebug: boolean = Boolean(urlParams?.has('debug'));
 	const hasDark: boolean = Boolean(urlParams?.has('dark'));
 	const hasLight: boolean = Boolean(urlParams?.has('light'));
 	const isSmallScreen = new MediaQuery('(max-width: 768px)');
-	let activeTab = $derived<'connections' | 'departures' | 'isochrones'>(
-		page.state.activeTab ??
-			(urlParams?.has('one')
-				? 'isochrones'
-				: urlParams?.has('stopId')
-					? 'departures'
-					: 'connections')
-	);
+	let activeTab = $derived<'connections' | 'departures' | 'isochrones' | 'n-to-all'>(
+        page.state.activeTab ??
+            (INITIAL_ORIGINS.length >= 2
+                ? 'n-to-all'
+                : urlParams?.has('one')
+                    ? 'isochrones'
+                    : urlParams?.has('stopId')
+                        ? 'departures'
+                        : 'connections')
+    );
 	const setActiveTab = (tab: typeof activeTab) => {
 		activeTab = tab;
 		pushState('', { activeTab: tab });
@@ -419,26 +424,23 @@
 	);
 	const originsParam = getUrlArray('origins');
     let nToAllOrigins = $state<Location[]>(
-        originsParam.map((str, i) => {
-            const pos = urlParams?.get(`originPos${i}`)?.split(',');
-            const lat = pos ? parseFloat(pos[0]) : 0;
-            const lon = pos ? parseFloat(pos[1]) : 0;
-            return {
-                label: urlParams?.get(`originName${i}`) ?? str,
-                match: lat && lon ? [{
-                    type: 'STOP' as const,
-                    id: str,
-                    name: urlParams?.get(`originName${i}`) ?? str,
-                    lat,
-                    lon,
-                    level: 0,
-                    score: 0,
-                    tokens: [],
-                    areas: []
-                }] : []
-            } satisfies Location;
-        })
+        INITIAL_ORIGINS.length >= 2
+            ? INITIAL_ORIGINS.map((str, i) => {
+                const pos = INITIAL_ORIGIN_POS[i]?.split(',');
+                const lat = pos ? parseFloat(pos[0]) : 0;
+                const lon = pos ? parseFloat(pos[1]) : 0;
+                return {
+                    label: INITIAL_ORIGIN_NAMES[i] || str,
+                    match: lat && lon
+                        ? [{ type: 'STOP' as const, id: str,
+                              name: INITIAL_ORIGIN_NAMES[i] || str,
+                              lat, lon, level: 0, score: 0, tokens: [], areas: [] }]
+                        : []
+                } satisfies Location;
+              })
+            : [{} as Location, {} as Location]
     );
+
 	let viaMinimumStay = $state(
 		urlParams?.has('via') ? getUrlArray('viaMinimumStay').map((s) => parseIntOr(s, 0)) : undefined
 	);
@@ -597,7 +599,14 @@
 		errorMessage: undefined,
 		errorCode: undefined
 	});
+    let nToAllOptions = $state<IsochronesOptions>({
+        status: 'IDLE',
+        opacity: 600,
+        errorCode: undefined,
+        errorMessage: undefined,
+    });
 
+    let nToAllAdvancedOptionsOpen = $state(false);
 	const toPlaceString = (l: Location) => {
 		if (l.match?.type === 'STOP') {
 			return l.match.id;
@@ -802,11 +811,13 @@
 	);
 
     let nToAllQuery = $derived(
-        nToAllOrigins.length >= 2 && nToAllOrigins.every((o) => o?.match?.length > 0)
+        activeTab === 'n-to-all' &&
+        nToAllOrigins.length >= 2 &&
+        nToAllOrigins.every((o) => o?.match?.length > 0) &&
+        !nToAllAdvancedOptionsOpen
             ? ({
                 query: {
-                    // Use the raw stop ID from getUrlArray, not toPlaceString
-                    origins: getUrlArray('origins'),
+                    origins: nToAllOrigins.map((o) => toPlaceString(o)),
                     maxTravelTime: Math.ceil(maxTravelTime / 60),
                     time: time.toISOString(),
                     transitModes,
@@ -823,7 +834,7 @@
                     preTransitModes: prePostModesToModes(preTransitModes),
                     maxPreTransitTime,
                     elevationCosts,
-                    maxMatchingDistance: pedestrianProfile == 'WHEELCHAIR' ? 8 : 250
+                    maxMatchingDistance: pedestrianProfile === 'WHEELCHAIR' ? 8 : 250
                 }
               } satisfies Parameters<typeof nToAll>[0])
             : undefined
@@ -957,51 +968,54 @@
 		}
 	});
     $effect(() => {
-        console.log('[NToAll] effect fired');
-        console.log('[NToAll] current URL:', window.location.search);
-        console.log('[NToAll] originsParam:', getUrlArray('origins'));
-        console.log('[NToAll] nToAllOrigins:', nToAllOrigins);
-        console.log('[NToAll] nToAllQuery:', nToAllQuery);
-        console.log('[NToAll] activeTab:', activeTab);
-        console.log('[NToAll] effect fired, activeTab:', activeTab, 'origins:', nToAllOrigins.length, 'query:', nToAllQuery);
-        if (nToAllQuery && activeTab == 'isochrones') {
-            if (lastNToAllQuery != nToAllQuery) {
+        if (nToAllQuery && activeTab === 'n-to-all') {
+            if (lastNToAllQuery !== nToAllQuery) {
                 lastNToAllQuery = nToAllQuery;
                 clearTimeout(nToAllQueryTimeout);
-                isochronesOptions.status = 'WORKING';
+                nToAllOptions.status = 'WORKING';
                 nToAllQueryTimeout = setTimeout(async () => {
                     try {
-                        const { data, error, response } = await nToAll(nToAllQuery);
+                        const { data, error, response } = await nToAll(nToAllQuery!);
                         if (error) {
-                            isochronesOptions.status = 'FAILED';
-                            isochronesOptions.errorCode = response.status;
-                            isochronesOptions.errorMessage = error.error;
+                            nToAllOptions.status = 'FAILED';
+                            nToAllOptions.errorCode = response.status;
+                            nToAllOptions.errorMessage = error.error;
                             return;
                         }
-                        console.log('[NToAll] API response:', data?.all?.length, 'places');
-                        nToAllComponent?.setResults(data?.all ?? []);  // ← only once
-                        isochronesOptions.status = (data?.all?.length ?? 0) === 0 ? 'EMPTY' : 'DONE';
+                        nToAllComponent?.setResults(data?.all ?? []);
+                        nToAllOptions.status = (data?.all?.length ?? 0) === 0 ? 'EMPTY' : 'DONE';
                     } catch (e) {
-                        isochronesOptions.status = 'FAILED';
-                        isochronesOptions.errorMessage = String(e);
-                        isochronesOptions.errorCode = 404;
+                        nToAllOptions.status = 'FAILED';
+                        nToAllOptions.errorMessage = String(e);
+                        nToAllOptions.errorCode = 404;
                     }
                 }, 60);
             }
+
+            // Push URL state so the search is shareable.
             untrack(() => {
                 const q = nToAllQuery?.query;
                 if (!q) return;
                 pushStateWithQueryString(
                     {
-                        origins: q.origins.join(','),  // already the raw stop IDs
-                        maxTravelTime: q.maxTravelTime,
+                        origins: q.origins.join(','),
+                        ...Object.fromEntries([
+                            ...nToAllOrigins.map((o, i) =>
+                                [`originName${i}`, o?.label ?? '']),
+                            ...nToAllOrigins.map((o, i) =>
+                                [`originPos${i}`, toPosString(o) ?? ''])
+                        ].filter(([, v]) => v)),
+                        maxTravelTime: q.maxTravelTime * 60,
                         time: q.time
                     },
-                    { activeTab }
+                    { activeTab: 'n-to-all' }
                 );
             });
         }
-        // ← nothing here — the two rogue lines are deleted
+        // Reset when leaving the tab so re-entering triggers a fresh search.
+        if (activeTab !== 'n-to-all') {
+            lastNToAllQuery = undefined;
+        }
     });
 
 	if (browser) {
@@ -1179,11 +1193,12 @@
 			bind:value={() => activeTab, setActiveTab}
 			class="flex h-full min-h-0 max-h-[97dvh] max-w-full w-[520px] flex-col overflow-hidden"
 		>
-			<Tabs.List class="grid shrink-0 grid-cols-3">
-				<Tabs.Trigger value="connections">{t.connections}</Tabs.Trigger>
-				<Tabs.Trigger value="departures">{t.departures}</Tabs.Trigger>
-				<Tabs.Trigger value="isochrones">{t.isochrones.title}</Tabs.Trigger>
-			</Tabs.List>
+			<Tabs.List class="grid shrink-0 grid-cols-4">
+                <Tabs.Trigger value="connections">{t.connections}</Tabs.Trigger>
+                <Tabs.Trigger value="departures">{t.departures}</Tabs.Trigger>
+                <Tabs.Trigger value="isochrones">{t.isochrones.title}</Tabs.Trigger>
+                <Tabs.Trigger value="n-to-all">N-to-All</Tabs.Trigger>
+            </Tabs.List>
 			<Tabs.Content value="connections" class="min-h-0 overflow-hidden">
 				<Card class="max-h-[calc(97dvh-2.5rem)] overflow-hidden bg-background rounded-lg">
 					<SearchMask
@@ -1290,6 +1305,52 @@
 					/>
 				</Card>
 			</Tabs.Content>
+			<Tabs.Content value="n-to-all" class="min-h-0 overflow-hidden">
+                <Card class="max-h-[calc(97dvh-2.5rem)] overflow-hidden bg-background rounded-lg">
+                    <NToAllMask
+                        bind:advancedOptionsOpen={nToAllAdvancedOptionsOpen}
+                        bind:origins={nToAllOrigins}
+                        bind:maxTravelTime
+                        bind:time
+                        bind:transitModes
+                        bind:maxTransfers
+                        bind:preTransitModes
+                        bind:postTransitModes
+                        bind:additionalTransferTime
+                        bind:transferTimeFactor
+                        bind:cyclingSpeed
+                        bind:pedestrianSpeed
+                        bind:maxPreTransitTime
+                        bind:maxPostTransitTime
+                        bind:pedestrianProfile
+                        bind:requireBikeTransport
+                        bind:requireCarTransport
+                        bind:noCompulsoryReservation
+                        bind:elevationCosts
+                        bind:ignorePreTransitRentalReturnConstraints
+                        bind:ignorePostTransitRentalReturnConstraints
+                        bind:useRoutedTransfers
+                        bind:preTransitProviderGroups
+                        bind:postTransitProviderGroups
+                        bind:directProviderGroups
+                        bind:vehicleHeight
+                        bind:vehicleWidth
+                        bind:vehicleLength
+                        bind:vehicleWeight
+                        bind:vehicleHazmat
+                        bind:vehicleHazmatWater
+                        bind:vehicleAxleCount
+                        bind:vehicleAxleLoad
+                        bind:vehicleTrailer
+                        bind:vehicleTopSpeed
+                        bind:vehicleLezAccess
+                        geocodingBiasPlace={center}
+                        {serverConfig}
+                        {hasDebug}
+                        bind:options={nToAllOptions}
+                    />
+                </Card>
+            </Tabs.Content>
 		</Tabs.Root>
 	</Control>
 
@@ -1568,16 +1629,19 @@
             <NToAll
                 bind:this={nToAllComponent}
                 {map}
-                origins={getUrlArray('origins').map((id, i) => ({
-                    id,
-                    name: urlParams?.get(`originName${i}`) ?? id
-                }))}
+                origins={nToAllOrigins
+                    .filter((o) => o?.match?.length > 0)
+                    .map((o, i) => ({
+                        id: toPlaceString(o),
+                        name: o?.label ?? `Origin ${i + 1}`
+                    }))}
                 streetModes={prePostModesToModes(preTransitModes) as PrePostDirectMode[]}
                 wheelchair={pedestrianProfile === 'WHEELCHAIR'}
                 maxAllTime={maxPreTransitTime}
                 {maxTravelTime}
-                active={activeTab === 'isochrones' && getUrlArray('origins').length >= 2}
-                options={isochronesOptions}
+                active={activeTab === 'n-to-all' &&
+                        nToAllOrigins.filter((o) => o?.match?.length > 0).length >= 2}
+                options={nToAllOptions}
             />
 			<Popup trigger="contextmenu" children={contextMenu} />
 

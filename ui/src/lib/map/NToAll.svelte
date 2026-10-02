@@ -7,16 +7,8 @@
 	import { NToAllLayer, NToAllBestLayer } from '$lib/map/NToAllLayer';
 	import type { IsochronesCircle } from '$lib/map/IsochronesLayer';
 
-	export const ORIGIN_COLORS = [
-		'#E6194B',
-		'#3CB44B',
-		'#4363D8',
-		'#F58231',
-		'#911EB4',
-		'#42D4F4',
-		'#F032E6',
-		'#BFEF45'
-	];
+	import { ORIGIN_COLORS } from '$lib/map/NToAllColors';
+
 
 	let {
 		map,

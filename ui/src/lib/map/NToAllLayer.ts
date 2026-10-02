@@ -1,3 +1,4 @@
+import maplibregl from 'maplibre-gl';
 import { IsochronesLayer } from '$lib/map/IsochronesLayer';
 import type { CustomRenderMethodInput, Map as MapLibreMap } from 'maplibre-gl';
 
