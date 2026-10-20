@@ -12,7 +12,6 @@
 	} from '@motis-project/motis-client';
 	import type { IsochronesOptions } from '$lib/map/IsochronesShared';
 	import { ORIGIN_COLORS } from '$lib/map/NToAllColors';
-    					style="background: {ORIGIN_COLORS[i % ORIGIN_COLORS.length]}22"
 	import AddressTypeahead from '$lib/AddressTypeahead.svelte';
 	import AdvancedOptions from '$lib/AdvancedOptions.svelte';
 	import DateInput from '$lib/DateInput.svelte';
@@ -117,19 +116,15 @@
 		}))
 	);
 
-	// One items array per origin typeahead.
-	let originItems = $state<Location[][]>(origins.map(() => []));
 
 	const addOrigin = () => {
 		if (origins.length >= 8) return;
 		origins = [...origins, {} as Location];
-		originItems = [...originItems, []];
 	};
 
 	const removeOrigin = (i: number) => {
 		if (origins.length <= 2) return;
 		origins = origins.filter((_, idx) => idx !== i);
-		originItems = originItems.filter((_, idx) => idx !== i);
 	};
 </script>
 
@@ -157,8 +152,12 @@
 						place={geocodingBiasPlace}
 						name="n-to-all-origin-{i}"
 						placeholder="Origin {i + 1}"
-						bind:selected={origins[i]}
-						bind:items={originItems[i]}
+						selected={origins[i]}
+						onChange={(loc) => {
+							const updated = [...origins];
+							updated[i] = loc;
+							origins = updated;
+						}}
 					/>
 				</div>
 				{#if origins.length > 2}

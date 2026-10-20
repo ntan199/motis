@@ -100,6 +100,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
   auto prepare_stats      = std::map<std::string, std::uint64_t>{};
   auto resolved_places    = std::vector<api::Place>{};
   auto origin_locs        = std::vector<n::location_idx_t>{};
+  auto origin_locs2        = std::vector<n::location_idx_t>{};
   auto all_starts         = std::vector<n::routing::offset>{};
   auto all_td_starts      = n::routing::td_offsets_t{};
   auto stop_to_origin_idx =
@@ -134,6 +135,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
 
     for (auto& s : starts) {
       all_starts.push_back(std::move(s));
+      origin_locs2.push_back(std::move(s.target()));
     }
     for (auto& [l, td] : td_starts) {
       auto& dest = all_td_starts[l];
@@ -194,7 +196,7 @@ api::NToAll raptor_n_to_all::operator()(boost::urls::url_view const& url) const 
   auto const* rtt = rt_ ? rt_->rtt_.get() : nullptr;
 
   auto const result = n::routing::raptor_n_to_all(
-      tt_, rtt, valid_origins, time, q.max_transfers_, max_travel_time);
+      tt_, rtt, origin_locs2, time, q);
 
   // --- Assemble response ---
   auto const max_results  = config_.get_limits().onetoall_max_results_;

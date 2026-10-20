@@ -103,6 +103,18 @@
                         ? 'departures'
                         : 'connections')
     );
+    $effect(() => {
+        console.log('[DEBUG] activeTab:', activeTab);
+        console.log('[DEBUG] origins length:', nToAllOrigins.length);
+        console.log('[DEBUG] origins match:', nToAllOrigins.map(o => o?.match?.length));
+        console.log('[DEBUG] advancedOpen:', nToAllAdvancedOptionsOpen);
+        console.log('[DEBUG] query conditions:', {
+            activeTab: activeTab === 'n-to-all',
+            length: nToAllOrigins.length >= 2,
+            everyMatch: nToAllOrigins.every((o) => o?.match?.length > 0),
+            advancedClosed: !nToAllAdvancedOptionsOpen
+        });
+    });
 	const setActiveTab = (tab: typeof activeTab) => {
 		activeTab = tab;
 		pushState('', { activeTab: tab });
@@ -426,17 +438,38 @@
     let nToAllOrigins = $state<Location[]>(
         INITIAL_ORIGINS.length >= 2
             ? INITIAL_ORIGINS.map((str, i) => {
-                const pos = INITIAL_ORIGIN_POS[i]?.split(',');
-                const lat = pos ? parseFloat(pos[0]) : 0;
-                const lon = pos ? parseFloat(pos[1]) : 0;
-                return {
-                    label: INITIAL_ORIGIN_NAMES[i] || str,
-                    match: lat && lon
-                        ? [{ type: 'STOP' as const, id: str,
-                              name: INITIAL_ORIGIN_NAMES[i] || str,
-                              lat, lon, level: 0, score: 0, tokens: [], areas: [] }]
-                        : []
-                } satisfies Location;
+                  const pos = INITIAL_ORIGIN_POS[i]?.split(',');
+                  const lat = pos ? parseFloat(pos[0]) : NaN;
+                  const lon = pos ? parseFloat(pos[1]) : NaN;
+
+                  const validCoordinates =
+                      Number.isFinite(lat) &&
+                      Number.isFinite(lon) &&
+                      lat >= -90 &&
+                      lat <= 90 &&
+                      lon >= -180 &&
+                      lon <= 180;
+
+                  const name = INITIAL_ORIGIN_NAMES[i] || str;
+
+                  return {
+                      label: name,
+                      match: validCoordinates
+                          ? [
+                                {
+                                    type: 'STOP' as const,
+                                    id: str,
+                                    name,
+                                    lat,
+                                    lon,
+                                    level: 0,
+                                    score: 0,
+                                    tokens: [],
+                                    areas: []
+                                }
+                            ]
+                          : []
+                  } satisfies Location;
               })
             : [{} as Location, {} as Location]
     );
@@ -810,35 +843,53 @@
 		)
 	);
 
+
     let nToAllQuery = $derived(
         activeTab === 'n-to-all' &&
         nToAllOrigins.length >= 2 &&
-        nToAllOrigins.every((o) => o?.match?.length > 0) &&
+        nToAllOrigins.every((o) => o?.match != null) &&
         !nToAllAdvancedOptionsOpen
-            ? ({
-                query: {
-                    origins: nToAllOrigins.map((o) => toPlaceString(o)),
-                    maxTravelTime: Math.ceil(maxTravelTime / 60),
-                    time: time.toISOString(),
-                    transitModes,
-                    maxTransfers,
-                    cyclingSpeed,
-                    pedestrianSpeed,
-                    transferTimeFactor,
-                    additionalTransferTime,
-                    useRoutedTransfers,
-                    pedestrianProfile,
-                    requireBikeTransport,
-                    requireCarTransport,
-                    noCompulsoryReservation,
-                    preTransitModes: prePostModesToModes(preTransitModes),
-                    maxPreTransitTime,
-                    elevationCosts,
-                    maxMatchingDistance: pedestrianProfile === 'WHEELCHAIR' ? 8 : 250
-                }
-              } satisfies Parameters<typeof nToAll>[0])
+            ? (() => {
+                  const originStrings = nToAllOrigins
+                      .filter((o) => o?.match != null)
+                      .map((o) => {
+                          const s = toPlaceString(o);
+                          console.log(
+                              '[NToAll] toPlaceString result:',
+                              s,
+                              'for:',
+                              o?.label
+                          );
+                          return s;
+                      });
+
+                  return {
+                      query: {
+                          origins: originStrings,
+                          maxTravelTime: Math.ceil(maxTravelTime / 60),
+                          time: time.toISOString(),
+                          transitModes,
+                          maxTransfers,
+                          cyclingSpeed,
+                          pedestrianSpeed,
+                          transferTimeFactor,
+                          additionalTransferTime,
+                          useRoutedTransfers,
+                          pedestrianProfile,
+                          requireBikeTransport,
+                          requireCarTransport,
+                          noCompulsoryReservation,
+                          preTransitModes: prePostModesToModes(preTransitModes),
+                          maxPreTransitTime,
+                          elevationCosts,
+                          maxMatchingDistance:
+                              pedestrianProfile === 'WHEELCHAIR' ? 8 : 250
+                      }
+                  } satisfies Parameters<typeof nToAll>[0];
+              })()
             : undefined
     );
+
     // At top level of <script>, alongside other state declarations:
     let nToAllComponent = $state<ReturnType<typeof NToAll>>();
 	const refreshSelectedItinerary = async () => {
@@ -967,7 +1018,18 @@
 			});
 		}
 	});
+
     $effect(() => {
+        console.log('[NToAll] effect fired, activeTab:', activeTab);
+        console.log('[NToAll] nToAllQuery:', nToAllQuery);
+        console.log('[NToAll] origins valid:',nToAllOrigins.map(o => ({ label: o?.label, matchLen: o?.match?.length })));
+        console.log('[DEBUG] origins detail:',
+            nToAllOrigins.map(o => ({
+                label: o?.label,
+                matchLen: o?.match?.length,
+                matchType: typeof o?.match,
+                keys: o ? Object.keys(o) : []
+            })));
         if (nToAllQuery && activeTab === 'n-to-all') {
             if (lastNToAllQuery !== nToAllQuery) {
                 lastNToAllQuery = nToAllQuery;
@@ -1629,18 +1691,15 @@
             <NToAll
                 bind:this={nToAllComponent}
                 {map}
-                origins={nToAllOrigins
-                    .filter((o) => o?.match?.length > 0)
-                    .map((o, i) => ({
-                        id: toPlaceString(o),
-                        name: o?.label ?? `Origin ${i + 1}`
-                    }))}
+                origins={nToAllOrigins.map((o, i) => ({
+                    id: o?.match ? toPlaceString(o) : '',
+                    name: o?.label ?? `Origin ${i + 1}`
+                }))}
                 streetModes={prePostModesToModes(preTransitModes) as PrePostDirectMode[]}
                 wheelchair={pedestrianProfile === 'WHEELCHAIR'}
                 maxAllTime={maxPreTransitTime}
                 {maxTravelTime}
-                active={activeTab === 'n-to-all' &&
-                        nToAllOrigins.filter((o) => o?.match?.length > 0).length >= 2}
+                active={activeTab === 'n-to-all'}
                 options={nToAllOptions}
             />
 			<Popup trigger="contextmenu" children={contextMenu} />

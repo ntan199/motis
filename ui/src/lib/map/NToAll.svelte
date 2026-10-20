@@ -6,9 +6,7 @@
 	import type { ReachablePlace } from '@motis-project/motis-client';
 	import { NToAllLayer, NToAllBestLayer } from '$lib/map/NToAllLayer';
 	import type { IsochronesCircle } from '$lib/map/IsochronesLayer';
-
 	import { ORIGIN_COLORS } from '$lib/map/NToAllColors';
-
 
 	let {
 		map,
@@ -34,19 +32,49 @@
 		streetModes.includes('BIKE') ? 3.8 : wheelchair ? 0.8 : 1.2
 	);
 
-	// Plain variables — never reactive.
+	// Plain variables — never reactive dependencies.
 	let currentLayers: NToAllLayer[] = [];
 	let bestLayer: NToAllBestLayer | null = null;
+	// Pending results to apply once layers are ready.
+	let pendingPlaces: ReachablePlace[] | null = null;
+
+	function applyResults(places: ReachablePlace[]) {
+		const validOrigins = origins.filter(o => o.id !== '');
+		const groups: IsochronesCircle[][] = validOrigins.map(() => []);
+
+		for (const p of places) {
+			const i = p.originIndex;
+			if (i == null || i < 0 || i >= validOrigins.length) continue;
+			if (!p.place?.lat || !p.place?.lon) continue;
+
+			const centerSeconds = Math.max(0, maxTravelTime - 60 * (p.duration ?? 0));
+			const walkSeconds = Math.min(centerSeconds, maxAllTime);
+
+			groups[i].push({
+				lng: p.place.lon,
+				lat: p.place.lat,
+				radiusMeters: walkSeconds * metersPerSecond,
+				centerSeconds,
+				edgeSeconds: centerSeconds - walkSeconds
+			});
+		}
+
+		for (let i = 0; i < currentLayers.length; i++) {
+			currentLayers[i].setCircles(groups[i] ?? [], maxTravelTime);
+		}
+
+		map?.triggerRepaint();
+	}
 
 	$effect(() => {
 		if (!map) return;
 		const m = map;
 
-		const currentOrigins = origins;
+		// Read ALL reactive props before any early return so they are tracked.
+		const currentOrigins = origins.filter(o => o.id !== '');
 		const opacity = options.opacity / 1000;
 		const isActive = active;
 
-		// Remove old layers.
 		untrack(() => {
 			for (const layer of currentLayers) {
 				if (m.getLayer(layer.id)) m.removeLayer(layer.id);
@@ -54,7 +82,6 @@
 			if (bestLayer && m.getLayer(bestLayer.id)) m.removeLayer(bestLayer.id);
 		});
 
-		// Create one NToAllLayer per origin + one NToAllBestLayer shared.
 		const newLayers = currentOrigins.map((_, i) =>
 			new NToAllLayer(`n-to-all-${i}`, ORIGIN_COLORS[i % ORIGIN_COLORS.length])
 		);
@@ -68,7 +95,6 @@
 
 		const addLayers = () => {
 			if (!m.isStyleLoaded()) return;
-			// Add origin layers first so their prerender() runs before best.
 			for (const layer of newLayers) {
 				if (!m.getLayer(layer.id)) {
 					try { m.addLayer(layer); }
@@ -77,10 +103,16 @@
 				layer.setOpacity(opacity);
 				layer.setActive(isActive);
 			}
-			// Best layer runs AFTER — its prerender() MAX-blends all union textures.
 			if (!m.getLayer(newBest.id)) {
 				try { m.addLayer(newBest); }
 				catch (e) { console.error('[NToAll] addBestLayer failed', e); }
+			}
+			// Apply any results that arrived before layers were ready.
+			if (pendingPlaces !== null) {
+				untrack(() => {
+					applyResults(pendingPlaces!);
+					pendingPlaces = null;
+				});
 			}
 		};
 
@@ -103,42 +135,23 @@
 	});
 
 	export function setResults(places: ReachablePlace[]) {
-		const groups: IsochronesCircle[][] = origins.map(() => []);
-
-		for (const p of places) {
-			const i = p.originIndex;
-			if (i == null || i < 0 || i >= origins.length) continue;
-			if (!p.place?.lat || !p.place?.lon) continue;
-
-			// Full walking radius circle — same as Isochrones.svelte.
-			// The Voronoi clipping in the GPU shader prevents overlap:
-			// each pixel is only rendered by the fastest origin.
-			const centerSeconds = Math.max(0, maxTravelTime - 60 * (p.duration ?? 0));
-			const walkSeconds = Math.min(centerSeconds, maxAllTime);
-
-			groups[i].push({
-				lng: p.place.lon,
-				lat: p.place.lat,
-				radiusMeters: walkSeconds * metersPerSecond,
-				centerSeconds,
-				edgeSeconds: centerSeconds - walkSeconds
-			});
+		console.log('[NToAll] setResults called, layers:', currentLayers.length,
+			'origins:', origins.length);
+		if (currentLayers.length === 0) {
+			// Layers not ready yet — store and apply when effect creates them.
+			pendingPlaces = places;
+			return;
 		}
-
-		for (let i = 0; i < currentLayers.length; i++) {
-			currentLayers[i].setCircles(groups[i] ?? [], maxTravelTime);
-		}
-
-		map?.triggerRepaint();
+		applyResults(places);
 	}
 </script>
 
-{#if active && origins.length > 0}
+{#if active && origins.filter(o => o.id !== '').length > 0}
 	<div
 		class="absolute bottom-8 right-4 z-10 flex flex-col gap-1
 		       rounded-lg bg-background/90 px-3 py-2 shadow text-sm"
 	>
-		{#each origins as origin, i}
+		{#each origins.filter(o => o.id !== '') as origin, i}
 			<div class="flex items-center gap-2">
 				<span
 					class="inline-block h-3 w-3 rounded-full"
