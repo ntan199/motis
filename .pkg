@@ -37,7 +37,7 @@
 [nigiri]
   url=git@github.com:ntan199/nigiri.git
   branch=voronoi_demo
-  commit=bd7d9b7c47e0772eb114f0706e3d8dc74f495282
+  commit=f22be38419a102f58e8c39acf877127dec861aba
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master
